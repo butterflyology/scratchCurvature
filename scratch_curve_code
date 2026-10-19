@@ -1,0 +1,387 @@
+"""Contact-based illustration: pole vs rounded bumper on one curved fender.
+
+Install: pip install numpy matplotlib pillow
+Run: python parking_scratch_contact.py
+Outputs: parking_scratch_mechanism.png, parking_scratch_mechanism.gif
+
+Model: A stationary car-fixed coordinate system, with x along the body,
+z vertical, and d outward projection from the body. The quarter-panel
+crown shifts in height along x. The straight pole has a depth profile
+independent of z; the rounded bumper has a curved depth profile that
+protrudes most near a chosen height. Contact is taken at the location
+of maximum relative protrusion (an illustrative, quasistatic model).
+"""
+
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.patches import Circle, Polygon, Rectangle, Arc
+from matplotlib.animation import FuncAnimation, PillowWriter
+
+# Geometry is identical for both scenarios.
+X_START = 6.55
+X_END = 8.82
+A_PANEL = 0.95                 # Panel's depth falloff away from its crown
+B_BUMPER = 9.0                # Rounded bumper's depth curvature
+BUMPER_HEIGHT = 2.58          # Height of the bumper's most protruding point
+RED = '#DF3047'
+INK = '#1E3446'
+BLUE = '#DCE7F0'
+
+
+def crown_height(x):
+    """Height of the maximum outward projection of the quarter panel."""
+    s = (np.asarray(x) - X_START) / (X_END - X_START)
+    return 2.55 + 0.55 * np.sin(np.pi * s)
+
+
+def contact_height(x, rounded):
+    """Height where the panel/object depth-profile clearance is smallest.
+
+    Panel outward depth:  d_panel = d0 - A_PANEL * (z - crown_height(x))**2
+    Pole forward depth:  independent of z
+    Curved bumper depth:  d_bumper = d1 + B_BUMPER * (z - BUMPER_HEIGHT)**2
+
+    The weighted mean below follows from maximizing the local overlap.
+    """
+    h = crown_height(x)
+    if not rounded:
+        return h
+    return (A_PANEL * h + B_BUMPER * BUMPER_HEIGHT) / (A_PANEL + B_BUMPER)
+
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.patches import PathPatch, Rectangle, Circle
+from matplotlib.path import Path
+from matplotlib.animation import FuncAnimation, PillowWriter
+
+# ============================================================
+# Geometry helpers
+# ============================================================
+
+def panel_outline():
+    """
+    Stylized front fender / quarter-panel outline.
+    Returns a matplotlib PathPatch.
+    """
+    verts = [
+        (2.0, 4.8),   # top-left
+        (6.0, 4.8),   # top horizontal
+        (7.2, 4.4),   # front upper curve control
+        (7.8, 3.0),   # front nose
+        (7.3, 1.3),   # front lower curve
+        (6.2, 0.9),   # lower front
+        (4.8, 0.9),   # before wheel arch
+        (4.4, 1.55),  # wheel arch peak left
+        (3.7, 1.65),  # wheel arch top center
+        (3.0, 1.55),  # wheel arch peak right
+        (2.6, 0.9),   # after wheel arch
+        (1.7, 1.0),   # lower rear
+        (1.0, 2.0),   # rear lower curve
+        (1.0, 3.7),   # rear upper curve
+        (2.0, 4.8),   # close
+    ]
+
+    codes = [
+        Path.MOVETO,
+        Path.LINETO,
+        Path.CURVE3,
+        Path.CURVE3,
+        Path.CURVE3,
+        Path.CURVE3,
+        Path.LINETO,
+        Path.CURVE3,
+        Path.CURVE3,
+        Path.CURVE3,
+        Path.LINETO,
+        Path.CURVE3,
+        Path.CURVE3,
+        Path.CURVE3,
+        Path.CLOSEPOLY,
+    ]
+
+    return PathPatch(
+        Path(verts, codes),
+        facecolor="#d8dde4",
+        edgecolor="black",
+        lw=2
+    )
+
+
+def add_panel_details(ax):
+    """
+    Adds visual details so the gray shape reads as a car panel.
+    """
+    # Body line
+    ax.plot([2.4, 5.8], [3.8, 3.8], color="#9ca5af", lw=2)
+    # Highlight
+    ax.plot([2.3, 5.7], [4.15, 4.15], color="white", lw=2, alpha=0.7)
+    # Front edge cue
+    ax.plot([7.0, 7.35], [3.6, 3.1], color="#7e8894", lw=3)
+    # Wheel arch
+    theta = np.linspace(np.pi * 0.05, np.pi * 0.95, 120)
+    r = 0.65
+    cx, cy = 3.7, 0.95
+    ax.plot(cx + r * np.cos(theta), cy + r * np.sin(theta), color="black", lw=2)
+    # Wheel hint
+    wheel = Circle((3.7, 0.55), 0.45, fill=False, ec="#777777", lw=1.5)
+    ax.add_patch(wheel)
+    # Label
+    ax.text(4.5, 3.0, "Car fender / quarter panel", fontsize=10,
+            color="#444444", ha="center")
+
+
+# ============================================================
+# Scratch/contact model
+# ============================================================
+
+def scratch_x_from_t(t):
+    """
+    Horizontal location of the scratch/contact point.
+    """
+    return 2.3 + 3.7 * t
+
+
+def pole_contact_y(t):
+    """
+    Straight pole against curved body panel:
+    contact height changes as the pole sweeps across the curved panel.
+    """
+    return 1.95 + 1.45 * np.sin(np.pi * t)
+
+
+def bumper_contact_y(t):
+    """
+    Curved bumper/front corner against same panel:
+    chosen here so the resulting scratch is nearly straight.
+    """
+    return 2.85 + 0.0 * t
+
+
+# ============================================================
+# Object drawing
+# ============================================================
+
+def draw_pole(ax, t):
+    """
+    Draw a straight vertical pole near the current contact position.
+    """
+    x_contact = scratch_x_from_t(t)
+    y_contact = pole_contact_y(t)
+
+    # Pole positioned just to the left of the panel
+    pole_x = x_contact - 2.25
+    pole = Rectangle((pole_x, 0.8), 0.38, 4.8,
+                     facecolor="#8d97a3", edgecolor="black", lw=1.5)
+    ax.add_patch(pole)
+
+    # Label
+    ax.text(pole_x + 0.19, 5.75, "Straight pole",
+            ha="center", va="bottom", fontsize=11)
+
+    # Contact arrow
+    ax.annotate("", xy=(x_contact - 0.55, y_contact), xytext=(pole_x + 0.42, y_contact),
+                arrowprops=dict(arrowstyle="->", lw=2))
+    ax.text((pole_x + x_contact) / 2 - 0.1, y_contact + 0.22,
+            "contact", fontsize=10, ha="center")
+
+    # Contact point
+    ax.plot(x_contact, y_contact, "o", ms=6, color="black")
+
+    return x_contact, y_contact
+
+
+def draw_bumper(ax, t):
+    """
+    Draw a curved front corner / bumper of another car.
+    It moves so that the contact point stays at nearly constant height.
+    """
+    x_contact = scratch_x_from_t(t)
+    y_contact = bumper_contact_y(t)
+
+    # A stylized curved front corner built relative to the contact point
+    bx = np.array([-1.7, -1.2, -0.75, -0.35, -0.12, 0.0]) + x_contact
+    by = np.array([ 2.3,  1.5,   0.7,  -0.2,  -0.8, -1.2]) + y_contact
+
+    ax.plot(bx, by, color="#4b5976", lw=7, solid_capstyle="round")
+
+    # Small hood/fender cue of the striking vehicle
+    hx = np.array([-2.6, -2.0, -1.45, -1.0, -0.55]) + x_contact
+    hy = np.array([ 0.25, 0.05, -0.10, -0.20, -0.20]) + y_contact
+    ax.plot(hx, hy, color="black", lw=2)
+
+    ax.text(x_contact - 0.9, 5.65, "Curved front corner\nof another car",
+            ha="center", va="bottom", fontsize=11)
+
+    # Contact arrow
+    ax.annotate("", xy=(x_contact - 0.05, y_contact), xytext=(x_contact - 0.72, y_contact),
+                arrowprops=dict(arrowstyle="->", lw=2))
+    ax.text(x_contact - 0.4, y_contact + 0.22,
+            "contact", fontsize=10, ha="center")
+
+    # Contact point
+    ax.plot(x_contact, y_contact, "o", ms=6, color="black")
+
+    return x_contact, y_contact
+
+
+# ============================================================
+# Axes setup
+# ============================================================
+
+def setup_axis(ax, title):
+    ax.set_xlim(0, 8.6)
+    ax.set_ylim(0, 6.2)
+    ax.set_aspect("equal")
+    ax.axis("off")
+
+    panel = panel_outline()
+    ax.add_patch(panel)
+    add_panel_details(ax)
+
+    ax.text(4.25, 6.05, title, ha="center", va="top",
+            fontsize=16, weight="bold")
+
+    return panel
+
+
+# ============================================================
+# Animation
+# ============================================================
+
+# Number of frames
+N = 70
+ts = np.linspace(0.03, 0.97, N)
+
+# Scratch history storage
+pole_trace_x = []
+pole_trace_y = []
+bumper_trace_x = []
+bumper_trace_y = []
+
+fig, axes = plt.subplots(1, 2, figsize=(14, 6))
+fig.patch.set_facecolor("white")
+
+def draw_static():
+    # Clear and redraw static background each frame
+    for ax in axes:
+        ax.clear()
+
+    pole_panel = setup_axis(axes[0], "Pole impact on the same panel")
+    bumper_panel = setup_axis(axes[1], "Another car brushes the same area")
+
+    # Bottom explanatory text
+    axes[0].text(
+        4.3, 0.12,
+        "Straight pole:\ncontact height changes as it moves across the curved panel.",
+        ha="center", va="bottom", fontsize=11
+    )
+
+    axes[1].text(
+        4.3, 0.12,
+        "Curved bumper/front corner:\ncontact stays at nearly the same height.",
+        ha="center", va="bottom", fontsize=11
+    )
+
+    return pole_panel, bumper_panel
+
+
+def update(frame):
+    t = ts[frame]
+
+    pole_panel, bumper_panel = draw_static()
+
+    # --- LEFT: pole scenario ---
+    px, py = draw_pole(axes[0], t)
+    pole_trace_x.append(px)
+    pole_trace_y.append(py)
+
+    pole_line, = axes[0].plot(
+        pole_trace_x, pole_trace_y,
+        color="crimson", lw=3.2, solid_capstyle="round"
+    )
+    pole_line.set_clip_path(pole_panel)
+
+    if len(pole_trace_x) > 8:
+        axes[0].text(5.0, 2.9, "Curved scratch",
+                     color="crimson", fontsize=11, rotation=24)
+
+    # --- RIGHT: bumper scenario ---
+    bx, by = draw_bumper(axes[1], t)
+    bumper_trace_x.append(bx)
+    bumper_trace_y.append(by)
+
+    bumper_line, = axes[1].plot(
+        bumper_trace_x, bumper_trace_y,
+        color="crimson", lw=3.2, solid_capstyle="round"
+    )
+    bumper_line.set_clip_path(bumper_panel)
+
+    if len(bumper_trace_x) > 8:
+        axes[1].text(4.9, 3.1, "Straight scratch",
+                     color="crimson", fontsize=11)
+
+    fig.suptitle(
+        "How different objects create different scratch patterns",
+        fontsize=20, weight="bold", y=0.98
+    )
+
+    fig.text(
+        0.5, 0.02,
+        "Same car panel, same general area, different contact geometry.",
+        ha="center", fontsize=11
+    )
+
+    return []
+
+
+ani = FuncAnimation(fig, update, frames=N, interval=90, blit=False)
+
+# Save GIF
+ani.save("parking_scratch_mechanism.gif", writer=PillowWriter(fps=12))
+
+plt.show()
+def draw_car(ax):
+    """Draw the same recognizable parked car and highlighted front fender."""
+    ax.set_xlim(0.25, 10.0)
+    ax.set_ylim(0.15, 6.05)
+    ax.set_aspect('equal', adjustable='box')
+    ax.axis('off')
+
+    # The parked vehicle is stationary; its front bumper is on the right.
+    outline = [
+        (0.65, 1.05), (0.65, 2.95), (1.10, 3.34), (2.65, 3.48),
+        (3.33, 4.53), (4.60, 4.60), (5.55, 3.61), (8.44, 3.53),
+        (9.29, 3.23), (9.62, 2.84), (9.62, 1.19), (9.26, 1.04),
+        (0.65, 1.05),
+    ]
+    ax.add_patch(Polygon(outline, closed=True, facecolor='#EFF2F5',
+                         edgecolor='#587084', linewidth=2.0, zorder=1))
+
+    # Windshield, side window, and vehicle detailing establish orientation.
+    ax.add_patch(Polygon([(3.55, 3.63), (4.62, 3.64), (5.19, 4.33),
+                          (3.98, 4.36)], closed=True, facecolor='#C4DCE8',
+                         edgecolor='#6A8292', linewidth=1.4, zorder=2))
+    ax.plot([5.34, 5.34], [3.60, 4.00], color='#768B9A', lw=2, zorder=2)
+    ax.plot([1.15, 8.88], [3.37, 3.37], color='#B2C0CA', lw=1.6, zorder=2)
+    ax.plot([9.33, 9.56], [3.12, 2.90], color='#E8AA50', lw=6, zorder=5)
+    ax.plot([9.51, 9.60], [1.62, 1.64], color='#758B9B', lw=4, zorder=5)
+    ax.plot([3.00, 3.00], [1.65, 3.28], color='#B6C3CC', lw=1.3, zorder=3)
+
+    # Wheel and arch help identify the quarter panel beside the front wheel.
+    wheel_x, wheel_z = 5.95, 1.07
+    ax.add_patch(Circle((wheel_x, wheel_z), 1.04, facecolor='#263645',
+                        edgecolor='#15212B', linewidth=1.5, zorder=3))
+    ax.add_patch(Circle((wheel_x, wheel_z), 0.66, facecolor='#D7DEE4',
+                        edgecolor='#71808E', linewidth=2.2, zorder=4))
+    ax.add_patch(Circle((wheel_x, wheel_z), 0.20, facecolor='#8494A2', zorder=5))
+    ax.add_patch(Arc((wheel_x, wheel_z), 2.18, 2.18, theta1=4, theta2=176,
+                     edgecolor='#64788A', linewidth=3.6, zorder=6))
+
+    # Front fender is the same highlighted blue region in both panels.
+    patch = Polygon([(6.91, 3.46), (8.56, 3.43), (9.18, 3.15),
+                     (9.20, 1.57), (7.10, 1.55), (6.97, 2.38)],
+                    closed=True, facecolor='#D6E7F2', edgecolor='#87A6BE',
+                    lw=1.6, alpha=0.8, zorder=2.5)
+    ax.add_patch(patch)
+
+    # Curvature contours suggest changing outward projection of the metal.
